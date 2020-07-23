@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">USB NS</string>
+    <string name="alphanumeric"> abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890</string>
+</resources>

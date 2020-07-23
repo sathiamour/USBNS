@@ -1,0 +1,3 @@
+include ':USBSerial'
+rootProject.name='USBNS'
+include ':app'

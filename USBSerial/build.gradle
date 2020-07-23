@@ -1,5 +1,6 @@
 apply plugin: 'com.android.library'
-apply plugin: 'maven-publish'
+//apply plugin: 'maven-publish'
+apply plugin: 'digital.wup.android-maven-publish'
 
 android {
     compileSdkVersion 30
@@ -33,7 +34,7 @@ dependencies {
 
 // Because the components are created only during the afterEvaluate phase, you must
 // configure your publications using the afterEvaluate() lifecycle method.
-afterEvaluate {
+/*afterEvaluate {
     publishing {
         publications {
             // Creates a Maven publication called "release".
@@ -54,6 +55,19 @@ afterEvaluate {
                 groupId = 'com.usb.serial'
                 artifactId = 'final-debug'
                 version = '1.0'
+            }
+        }
+    }
+}*/
+publishing {
+    publications {
+        android.libraryVariants.all { variant ->
+
+            "maven${variant.name.capitalize()}Aar"(MavenPublication) {
+                from components.findByName("android${variant.name.capitalize()}")
+                groupId 'com.github.sathiamour'
+                artifactId 'usb-serial'
+                version "1.0.0-${variant.name}"
             }
         }
     }

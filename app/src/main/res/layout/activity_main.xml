@@ -261,6 +261,7 @@
                 android:layout_marginEnd="34dp"
                 android:orientation="horizontal"
                 android:weightSum="1"
+                android:visibility="gone"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toEndOf="@+id/textView6"
                 app:layout_constraintTop_toBottomOf="@+id/editText5">
@@ -295,6 +296,7 @@
                 android:text="Data Type :"
                 android:textSize="16sp"
                 android:textStyle="bold"
+                android:visibility="gone"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/editText5" />
 

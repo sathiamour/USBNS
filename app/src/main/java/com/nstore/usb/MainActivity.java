@@ -9,6 +9,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 
+import android.text.TextUtils;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -29,15 +30,18 @@ import com.karumi.dexter.PermissionToken;
 import com.karumi.dexter.listener.PermissionRequest;
 import com.karumi.dexter.listener.multi.MultiplePermissionsListener;
 import com.usb.serial.USBManager;
-import com.usb.serial.listener.OnUsbResponse;
+import com.usb.serial.listener.OnUsbReadResponse;
+import com.usb.serial.listener.OnUsbWriteResponse;
 import com.usb.serial.listener.USBConnectionListener;
 import com.usb.serial.receiver.USBConnectionReceiver;
 import com.usb.serial.util.LogWriter;
 
+import org.json.JSONObject;
+
 import java.util.List;
 
 
-public class MainActivity extends AppCompatActivity implements View.OnClickListener, USBConnectionListener {
+public class MainActivity extends AppCompatActivity implements View.OnClickListener, USBConnectionListener,OnUsbReadResponse {
     private static String TAG=MainActivity.class.getSimpleName();
     Toolbar toolbar;
     ProgressBar progressBar;
@@ -89,10 +93,63 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         if(isTransactionInProcess){
             logWriter.appendLog("Transaction Interrupted");
             isTransactionInProcess=false;
-            clearData();
+//            clearData();
             progressBar.setVisibility(View.GONE);
             Toast.makeText(MainActivity.this,"Transaction Interrupted",Toast.LENGTH_SHORT).show();
         }
+    }
+
+    @Override
+    public void onReadSuccess(String data) {
+        Log.i(TAG,"Response : "+data);
+        isTransactionInProcess=false;
+        try {
+            JSONObject jsonData = new JSONObject(data);
+            String requestID = jsonData.has("requestID") ? jsonData.getString("requestID") : null;
+            final String responseMsg = jsonData.has("responseMsg") ? jsonData.getString("responseMsg") : null;
+            String responsecode = jsonData.has("responsecode") ? jsonData.getString("responsecode") : null;
+            final String responseCode = jsonData.has("responseCode") ? jsonData.getString("responseCode") : null;
+            String rrnnumber = jsonData.has("rrnnumber") ? jsonData.getString("rrnnumber") : null;
+            String transactionID = jsonData.has("transactionID") ? jsonData.getString("transactionID") : null;
+
+           final StringBuilder text = new StringBuilder();
+            text.append("requestID : "+requestID+"\n");
+            text.append("responseMsg : "+responseMsg+"\n");
+            text.append("responsecode : "+responsecode+"\n");
+            text.append("responseCode : "+responseCode+"\n");
+            text.append("rrnnumber : "+rrnnumber+"\n");
+            text.append("transactionID : "+transactionID);
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    clearData();
+                    progressBar.setVisibility(View.GONE);
+                    if(!TextUtils.isEmpty(responseCode) && responseCode.equalsIgnoreCase("0")){
+                        Toast.makeText(MainActivity.this, "Transaction Success : "+text.toString(), Toast.LENGTH_SHORT).show();
+                    }else{
+                        Toast.makeText(MainActivity.this, responseMsg, Toast.LENGTH_SHORT).show();
+                    }
+
+                }
+            });
+
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void onReadFailure(final String error) {
+        logWriter.appendLog(error);
+        isTransactionInProcess=false;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                progressBar.setVisibility(View.GONE);
+                Toast.makeText(MainActivity.this, error, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     @Override
@@ -101,7 +158,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         setContentView(R.layout.activity_main);
 
         logWriter=new LogWriter();
-        usbManager=new USBManager(MainActivity.this);
+        usbManager=new USBManager(MainActivity.this,MainActivity.this);
         isConnected=false;
         toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
@@ -230,50 +287,31 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 String extra1=edtdata1.getText().toString();
                 String extra2=edtData2.getText().toString();
                 String extra3=edtData3.getText().toString();
-                if(rbJson.isChecked()){
-                    usbManager.addJsonData(amount,tranId,extra1,extra2,extra3);
-                }else{
-                    usbManager.addXMLData(amount,tranId,extra1,extra2,extra3);
-                }
-                if(usbManager.usbPermission== USBManager.UsbPermission.Granted)  {
-                    if(usbManager.deviceFound!=null){
-                      int requestDataType=rbJson.isChecked()?0:1;
-                      isTransactionInProcess=true;
-                      progressBar.setVisibility(View.VISIBLE);
-                      usbManager.OpenDeviceConnection(requestDataType, usbManager.deviceFound, new OnUsbResponse() {
-                          @Override
-                          public void onSuccess(final String data) {
-                              logWriter.appendLog(data);
-                              isTransactionInProcess=false;
-                              runOnUiThread(new Runnable() {
-                                  @Override
-                                  public void run() {
-                                      clearData();
-                                      progressBar.setVisibility(View.GONE);
-                                      Toast.makeText(MainActivity.this, data, Toast.LENGTH_SHORT).show();
-                                  }
-                              });
-
-                          }
-
-                          @Override
-                          public void onFailure(final String error) {
-                              logWriter.appendLog(error);
-                            isTransactionInProcess=false;
-                            runOnUiThread(new Runnable() {
+                JSONObject jsonData= addJsonData(amount,tranId,extra1,extra2,extra3); // Convert to Json data
+                if(jsonData!=null){
+                    String writeData=jsonData.toString();
+                    if(usbManager.isDeviceReadyToTransfer())  {
+                            isTransactionInProcess=true;
+                            progressBar.setVisibility(View.VISIBLE);
+                            usbManager.onWriteData(writeData, new OnUsbWriteResponse() {
                                 @Override
-                                public void run() {
+                                public void onWriteSuccess(String data) {
+                                    Toast.makeText(MainActivity.this,"Transaction initiated.",Toast.LENGTH_SHORT).show();
+                                }
+
+                                @Override
+                                public void onWriteFailure(String error) {
+                                    isTransactionInProcess=false;
                                     progressBar.setVisibility(View.GONE);
-                                    Toast.makeText(MainActivity.this, error, Toast.LENGTH_SHORT).show();
+                                    Toast.makeText(MainActivity.this,"Transaction not initiated.",Toast.LENGTH_SHORT).show();
                                 }
                             });
-                          }
-                      });
-                    }else checkConnection();
-
-                }else{
-                    checkConnection();
+                    }
+                    else{
+                        checkConnection();
+                    }
                 }
+
             }else{
                 logWriter.appendLog("No Device Connected");
                 Toast.makeText(this,"Check the device is connected to transfer",Toast.LENGTH_SHORT).show();
@@ -305,6 +343,39 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }*/
         else return true;
     }
+
+    private String addXMLData(String amount,String tranId,String extra1,String extra2,String extra3){
+        if(TextUtils.isEmpty(amount) || TextUtils.isEmpty(tranId)) {
+            return null;
+        }
+        if (TextUtils.isEmpty(extra1))extra1=" ";
+        if (TextUtils.isEmpty(extra2))extra2=" ";
+        if (TextUtils.isEmpty(extra3))extra3=" ";
+        return "<TransactionRequest RequestID=\"01\"><TotalAmount>"+amount+"</TotalAmount><PrivateData>transactionID=" +tranId+"</PrivateData><additionalData1>"+extra1+"</additionalData1><additionalData2>"+extra2+"</additionalData2><additionalData3>"+extra3+"</additionalData3></TransactionRequest>";
+    }
+
+    private JSONObject addJsonData(String amount,String tranId,String extra1,String extra2,String extra3){
+        if(TextUtils.isEmpty(amount) || TextUtils.isEmpty(tranId)) {
+            return null;
+        }
+        if (TextUtils.isEmpty(extra1))extra1=" ";
+        if (TextUtils.isEmpty(extra2))extra2=" ";
+        if (TextUtils.isEmpty(extra3))extra3=" ";
+        JSONObject jsonObject=new JSONObject();
+        try {
+            jsonObject.put("requestID", "01");
+            jsonObject.put("transactionID", tranId);
+            jsonObject.put("totalAmount", amount);
+            jsonObject.put("additionalData1", extra1);
+            jsonObject.put("additionalData2", extra2);
+            jsonObject.put("additionalData3", extra3);
+            return jsonObject;
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+        return null;
+    }
+
 
     @Override
     protected void onResume() {

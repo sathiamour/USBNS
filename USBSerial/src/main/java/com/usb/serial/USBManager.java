@@ -19,7 +19,8 @@ import com.usb.serial.driver.ProbeTable;
 import com.usb.serial.driver.UsbSerialDriver;
 import com.usb.serial.driver.UsbSerialPort;
 import com.usb.serial.driver.UsbSerialProber;
-import com.usb.serial.listener.OnUsbResponse;
+import com.usb.serial.listener.OnUsbReadResponse;
+import com.usb.serial.listener.OnUsbWriteResponse;
 import com.usb.serial.util.LogWriter;
 import com.usb.serial.util.SerialInputOutputManager;
 
@@ -52,6 +53,7 @@ public class USBManager {
     UsbEndpoint mWriteEndpoint = null;
 
     UsbSerialDriver driver;
+    UsbSerialPort usbSerialPort;
     SerialInputOutputManager  usbIoManager;
     private static final int WRITE_WAIT_MILLIS = 0;// infinite
     private static final int READ_WAIT_MILLIS = 0;// infinite
@@ -59,16 +61,18 @@ public class USBManager {
     public enum UsbPermission { Unknown, Requested, Granted, Denied };
     public static UsbPermission usbPermission = UsbPermission.Unknown;
 
-    private String tranData;
-    private int requestDatatype;
+//    private String tranData;
+//    private int requestDatatype;
     private Thread runnableThread;
     private static final int BUFSIZ = 4096;
     private final ByteBuffer mReadBuffer = ByteBuffer.allocate(BUFSIZ);
 
     private LogWriter logWriter;
+    private OnUsbReadResponse onUsbResponse;
 
-    public USBManager(Context context){
+    public USBManager(Context context, OnUsbReadResponse onUsbResponse){
         this.context=context;
+        this.onUsbResponse=onUsbResponse;
         deviceFound = null;
         logWriter=new LogWriter();
     }
@@ -216,7 +220,7 @@ public class USBManager {
 
         if (permitToRead) {
             usbPermission = UsbPermission.Granted;
-//            result = OpenDevice(deviceToRead);
+            openDevice(deviceToRead);
             return 1;
         } else {
            /* Toast.makeText(context, "err_no_permission, permitToRead",
@@ -229,9 +233,7 @@ public class USBManager {
 
     }
 
-    public void OpenDeviceConnection(final int requestDataType,final UsbDevice device,final OnUsbResponse onResponse) {
-        this.requestDatatype=requestDataType;
-
+    private void openDevice(final UsbDevice device){
         UsbManager manager = (UsbManager) context.getSystemService(Context.USB_SERVICE);
         List<UsbSerialDriver> availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(manager);
         if (availableDrivers.isEmpty()) {
@@ -243,11 +245,11 @@ public class USBManager {
             UsbSerialProber prober = new UsbSerialProber(customTable);
             availableDrivers = prober.findAllDrivers(manager);
             if(availableDrivers.isEmpty()){
-                onResponse.onFailure("Device driver not found");
+                onUsbResponse.onReadFailure("Device driver not found");
             }
         }
 
-        // Open a connection to the first available driver.
+//        Open a connection to the first available driver.
         driver = availableDrivers.get(0);
 //        usbDeviceConnection = manager.openDevice(driver.getDevice());
         if(usbDeviceConnection==null) {
@@ -257,97 +259,116 @@ public class USBManager {
             usbDeviceConnection = manager.openDevice(device);
         }
 
-        if (usbDeviceConnection != null && usbPermission== UsbPermission.Granted) {
-            /*Method 1 - Bulk Transfer*/
-           /* UsbInterface intf = device.getInterface(0);
-            UsbEndpoint endpoint = intf.getEndpoint(0);
-            usbDeviceConnection.claimInterface(usbInterface, forceClaim);
-            byte[] byteArr = tranData.getBytes();
-           int transfer= usbDeviceConnection.bulkTransfer(endpoint, byteArr, byteArr.length, TIMEOUT); //do in another thread
-            return transfer==0?true:false;*/
-
-           /*Method 2 - direct read/write data*/
-           /*boolean isDone=readData();
-           return isDone;*/
-
-           /*Method 3 - direct write + event driven read data*/
-//          readIOUsingManager();
-
-            final UsbSerialPort usbSerialPort = driver.getPorts().get(0); // Most devices have just one port (port 0)
-//            final Handler mHandler=new Handler();
-            runnableThread= new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    try{
-                        usbSerialPort.open(usbDeviceConnection);
-                        usbSerialPort.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
-                        int writeBytes= usbSerialPort.write(tranData.getBytes(), WRITE_WAIT_MILLIS);
-                        Log.i(TAG,"Actual number of bytes written : "+writeBytes);
-                        logWriter.appendLog("Actual number of bytes written : "+writeBytes);
-                        if(writeBytes>0){
-                            logWriter.appendLog("Request Sent : "+tranData);
-                            Log.i(TAG,"******************** Write Data Success ******************");
-                        }
-                        logWriter.appendLog("***Waiting for Response***");
-                       /* int readBytes= usbSerialPort.read(mReadBuffer.array(),READ_WAIT_MILLIS);
-                        logWriter.appendLog("Actual number of bytes read : "+readBytes);
-                        Log.i(TAG,"Actual number of bytes Read : "+writeBytes);
-                        if(readBytes>0){
-                        byte[] readData = new byte[readBytes];
-                            mReadBuffer.get(readData, 0, readBytes);
-                            Log.i(TAG,"************Read Data Success****************");
-                            try {
-                                String strData = new String(readData, "UTF-8");
-                                strData=cleanTextContent(strData);
-                                onProcessResponse(usbSerialPort,strData,onResponse);
-                            }catch (UnsupportedEncodingException ex){
-                                ex.printStackTrace();
-                            }
-
-                        }else{
-                            onResponse.onFailure("No Data returned");
-                        }*/
-                        usbIoManager=new SerialInputOutputManager(usbSerialPort);
-                        usbIoManager.setReadTimeout(READ_WAIT_MILLIS);
-                        usbIoManager.setWriteTimeout(WRITE_WAIT_MILLIS);
-                        usbIoManager.setListener(new SerialInputOutputManager.Listener() {
-                            @Override
-                            public void onNewData(byte[] data) {
-                                Log.i(TAG,"************Read Data Received****************");
-                                    String strData = new String(data);
-                                    strData=cleanTextContent(strData);
-                                    onProcessResponse(usbSerialPort,strData,onResponse);
-                            }
-
-                            @Override
-                            public void onRunError(Exception e) {
-                                String error=e.getMessage();
-                                logWriter.appendLog("onRunError : "+error);
-                            }
-                        });
-                        Executors.newSingleThreadExecutor().submit(usbIoManager);
-                    }catch (Exception e){
-                        e.printStackTrace();
-                        onResponse.onFailure("Exception : "+e.getMessage());
-                    }
-                }
-            });
-            runnableThread.start();
-        } else {
-            onResponse.onFailure("Error -  No open device");
+        if (usbDeviceConnection != null && usbPermission== UsbPermission.Granted){
+            usbSerialPort = driver.getPorts().get(0); // Most devices have just one port (port 0)
+            try {
+                usbSerialPort.open(usbDeviceConnection);
+                usbSerialPort.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
+                onReadData(); // Initialise device for listening
+            }catch (Exception e){
+                e.printStackTrace();
+                onUsbResponse.onReadFailure("Exception : "+e.getMessage());
+            }
+        }
+        else {
+            onUsbResponse.onReadFailure("Error -  No open device");
         }
     }
 
-    private void onProcessResponse(UsbSerialPort usbSerialPort, String data, OnUsbResponse onResponse){
+    public boolean isDeviceReadyToTransfer(){
+        if(usbPermission== USBManager.UsbPermission.Granted) {
+            if (deviceFound != null) {
+                if(usbDeviceConnection!=null){
+                    if(usbSerialPort!=null && usbSerialPort.isOpen()){
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    public void onWriteData(String data, OnUsbWriteResponse onUsbWriteResponse){
+        if(TextUtils.isEmpty(data)) {
+            String response="Error -  Invalid write data";
+            logWriter.appendLog(response);
+            onUsbWriteResponse.onWriteFailure(response);
+        }
+        else if(usbSerialPort!=null && usbSerialPort.isOpen()){
+            Log.i(TAG,"onWriteData - usbSerialPort Open");
+            try {
+                int writeBytes = usbSerialPort.write(data.getBytes(), WRITE_WAIT_MILLIS);
+                Log.i(TAG, "Actual number of bytes written : " + writeBytes);
+                logWriter.appendLog("Actual number of bytes written : " + writeBytes);
+                if (writeBytes > 0) {
+                    logWriter.appendLog("Request Sent : " + data);
+                    Log.i(TAG, "******************** Write Data Success ******************");
+                    onUsbWriteResponse.onWriteSuccess(data);
+                }else{
+                    String response="Write data Failure - write bytes : " + writeBytes;
+                    logWriter.appendLog(response);
+                    onUsbWriteResponse.onWriteFailure(response);
+                }
+            }catch (Exception e){
+                e.printStackTrace();
+                String response="Write Exception : "+e.getMessage();
+                logWriter.appendLog(response);
+                onUsbWriteResponse.onWriteFailure(response);
+            }
+        }else{
+            Log.e(TAG,"onWriteData - usbSerialPort not Open");
+            String response="Write Error - No open device";
+            logWriter.appendLog(response);
+            onUsbWriteResponse.onWriteFailure(response);
+        }
+    }
+
+    public void onReadData(){
+        Log.i(TAG,"onReadData - called");
+        if(usbSerialPort!=null && usbSerialPort.isOpen()){
+            Log.i(TAG,"onReadData - usbSerialPort Open");
+            runnableThread= new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    usbIoManager=new SerialInputOutputManager(usbSerialPort);
+                    usbIoManager.setReadTimeout(READ_WAIT_MILLIS);
+                    usbIoManager.setListener(new SerialInputOutputManager.Listener() {
+                        @Override
+                        public void onNewData(byte[] data) {
+                            Log.i(TAG,"************Read Data Received****************");
+                            String strData = new String(data);
+                            strData=cleanTextContent(strData);
+                            onProcessResponse(strData);
+                        }
+
+                        @Override
+                        public void onRunError(Exception e) {
+                            Log.e(TAG,"onRunError : "+e.getMessage());
+                            String error=e.getMessage();
+                            logWriter.appendLog("onRunError : "+error);
+                        }
+
+                    });
+                    Executors.newSingleThreadExecutor().submit(usbIoManager);
+                    logWriter.appendLog("***Waiting for Response***");
+                }
+            });
+            runnableThread.start();
+        }else{
+            Log.e(TAG,"onReadData - usbSerialPort not Open");
+            onUsbResponse.onReadFailure("Error -  No open device");
+        }
+    }
+
+    private void onProcessResponse(String data){
         if(TextUtils.isEmpty(data)){
             Log.i(TAG,"Response : "+data);
             logWriter.appendLog("Response : "+data);
             return;
         }else{
-            if(requestDatatype==0){  // json
                 logWriter.appendLog("Raw Response length : "+data.length());
                 logWriter.appendLog("Raw Response : "+data);
-                if(data.length()>1){ //data.contains("{") && data.contains("}")
+                if(data.length()>1 && data.contains("{") && data.contains("}")){
                     try {
                         JSONObject jsonData = new JSONObject(data);
                         String requestID=jsonData.has("requestID")?jsonData.getString("requestID"):null;
@@ -357,19 +378,9 @@ public class USBManager {
                         String rrnnumber=jsonData.has("rrnnumber")?jsonData.getString("rrnnumber"):null;
                         String transactionID=jsonData.has("transactionID")?jsonData.getString("transactionID"):null;
 
-                        StringBuilder text = new StringBuilder();
-                        text.append("requestID : "+requestID+"\n");
-                        text.append("responseMsg : "+responseMsg+"\n");
-                        text.append("responsecode : "+responsecode+"\n");
-                        text.append("responseCode : "+responseCode+"\n");
-                        text.append("rrnnumber : "+rrnnumber+"\n");
-                        text.append("transactionID : "+transactionID);
-                        if(text!=null){
-                            onResponse.onSuccess("Response : "+text.toString());
-                        }else{
-                            onResponse.onSuccess("Response : "+text);
-                        }
-                        try {
+                        onUsbResponse.onReadSuccess(jsonData.toString());
+
+                        /*try {
                             if(usbSerialPort!=null && usbSerialPort.isOpen())
                                 usbSerialPort.close();
                             if(usbIoManager!=null)
@@ -377,7 +388,8 @@ public class USBManager {
                         }catch (Exception e){
                             e.printStackTrace();
                             logWriter.appendLog("usbSerialPort close Exception : "+e.getMessage());
-                        }
+                        }*/
+
                     }catch (Exception e){
                         e.printStackTrace();
                         Log.e(TAG,"Error data : "+data);
@@ -389,44 +401,7 @@ public class USBManager {
                     Log.i(TAG,"non JSON data received : "+data);
                     logWriter.appendLog("non JSON data received : "+data);
                 }
-
-            }else{ // xml
-                onResponse.onSuccess("Response : "+data);
-            }
         }
-    }
-
-    public boolean addXMLData(String amount,String tranId,String extra1,String extra2,String extra3){
-        if(TextUtils.isEmpty(amount) || TextUtils.isEmpty(tranId)) {
-            return false;
-        }
-        if (TextUtils.isEmpty(extra1))extra1=" ";
-        if (TextUtils.isEmpty(extra2))extra2=" ";
-        if (TextUtils.isEmpty(extra3))extra3=" ";
-        tranData=  "<TransactionRequest RequestID=\"01\"><TotalAmount>"+amount+"</TotalAmount><PrivateData>transactionID=" +tranId+"</PrivateData><additionalData1>"+extra1+"</additionalData1><additionalData2>"+extra2+"</additionalData2><additionalData3>"+extra3+"</additionalData3></TransactionRequest>";
-        return true;
-    }
-
-    public boolean addJsonData(String amount,String tranId,String extra1,String extra2,String extra3){
-        if(TextUtils.isEmpty(amount) || TextUtils.isEmpty(tranId)) {
-            return false;
-        }
-        if (TextUtils.isEmpty(extra1))extra1=" ";
-        if (TextUtils.isEmpty(extra2))extra2=" ";
-        if (TextUtils.isEmpty(extra3))extra3=" ";
-        JSONObject jsonObject=new JSONObject();
-        try {
-            jsonObject.put("requestID", "01");
-            jsonObject.put("transactionID", tranId);
-            jsonObject.put("totalAmount", amount);
-            jsonObject.put("additionalData1", extra1);
-            jsonObject.put("additionalData2", extra2);
-            jsonObject.put("additionalData3", extra3);
-            tranData=jsonObject.toString();
-        }catch (Exception e){
-            e.printStackTrace();
-        }
-        return true;
     }
 
     private static String cleanTextContent(String text)
